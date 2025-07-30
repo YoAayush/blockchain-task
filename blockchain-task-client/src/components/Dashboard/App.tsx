@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useActiveAccount, useWalletBalance, useSendTransaction } from "thirdweb/react";
-// import { Token } from "thirdweb";
 import { Clock, Copy, ExternalLink, Send, Wallet } from "lucide-react";
 import { client } from "../../client";
 import { sepolia } from "thirdweb/chains";
@@ -14,7 +13,6 @@ import {
 } from "thirdweb";
 import { parseUnits, ethers } from "ethers";
 import axios from "axios";
-// import { claimTo, balanceOf } from "thirdweb/extensions/erc721";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 
@@ -26,24 +24,27 @@ export default function Dashboard() {
         address: account?.address,
         client,
     });
+
+    // console.log("account", account);
+    // console.log("data", data);
     // console.log("balance", data?.displayValue, data?.symbol);
 
     const contract = getContract({
-        address: account?.address || "N/A",
+        address: import.meta.env.VITE_CONTRACT_ADDRESS,
         client,
         chain: sepolia,
     });
 
-    console.log("contract", contract?.address, contract?.chain.id);
-
-    // const nativeBalance = useBalance(account); // ETH balance
-    // const tokenBalance = useTokenBalance(account, tokenAddress); // MYT balance
+    // console.log("contract", contract);
+    // console.log("contract", contract?.address, contract?.chain.id);
 
     const [tab, setTab] = useState<"send" | "history">("send")
     const [recipientAddress, setRecipientAddress] = useState("")
     const [amount, setAmount] = useState("")
+    const [loadinghistory, setLoadingHistory] = useState(false);
     const [transactionHistory, setTransactionHistory] = useState([]);
     const [balance, setBalance] = useState("");
+    const [transactionPending, setTransactionPending] = useState(false);
 
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
@@ -53,48 +54,50 @@ export default function Dashboard() {
     //     return `${address.slice(0, 6)}...${address.slice(-4)}`
     // }
 
-    useEffect(() => {
-        if (!account) {
-            console.log("No active account found");
-            return;
-        }
-        // console.log("Active account:", account.address);
+    const apiKey = import.meta.env.VITE_APIKEY;
+    const apiKeyToken = import.meta.env.VITE_APIKEYTOKEN;
 
-        const apiKey = import.meta.env.VITE_APIKEY;
-        const apiKeyToken = import.meta.env.VITE_APIKEYTOKEN;
-        const fetchTokenBalance = async () => {
-            try {
-                const BalanceResponse = await axios.get(`${apiKey}/api?module=account&action=balance&address=${account?.address}&tag=latest&apikey=${apiKeyToken}`);
-                const TransactionListResponse = await axios.get(`${apiKey}/api?module=account&action=txlist&address=${account?.address}&startblock=0&endblock=99999999&page=1&offset=10&sort=asc&apikey=${apiKeyToken}`);
-                const BalanceResult = BalanceResponse.data;
-                const TransactionListResult = TransactionListResponse.data;
-                if (BalanceResult.status === "1" && TransactionListResult.status === "1") {
-                    const balance = ethers.formatEther(BalanceResult.result);
-                    const transactions = TransactionListResult.result;
-                    setBalance(balance);
-                    setTransactionHistory(transactions.reverse());
-                    // console.log("Transaction History:", transactions);
-                    // console.log("Token Balance:", balance);
-                } else {
-                    console.error("Error fetching token balance:", BalanceResult.message);
-                    console.error("Error fetching transaction list:", TransactionListResult.message);
-                }
-            } catch (error) {
-                console.error("Error fetching token balance:", error);
+    const fetchTokenBalance = async () => {
+        try {
+            setLoadingHistory(true);
+            const BalanceResponse = await axios.get(`${apiKey}/api?chainid=${sepolia.id}&module=account&action=balance&address=${account?.address}&tag=latest&apikey=${apiKeyToken}`);
+            const TransactionListResponse = await axios.get(`${apiKey}/api?chainid=${sepolia.id}&module=account&action=txlist&address=${account?.address}&startblock=0&endblock=99999999&page=1&offset=10&sort=asc&apikey=${apiKeyToken}`);
+
+            const BalanceResult = BalanceResponse.data;
+            const TransactionListResult = TransactionListResponse.data;
+
+            if (BalanceResult.status === "1" && TransactionListResult.status === "1") {
+                const balance = ethers.formatEther(BalanceResult.result);
+                const transactions = TransactionListResult.result;
+                setBalance(balance);
+                setTransactionHistory(transactions.reverse());
+            } else {
+                console.error("Error fetching token balance:", BalanceResult.message);
+                console.error("Error fetching transaction list:", TransactionListResult.message);
             }
-        };
-        fetchTokenBalance();
-    }, [account]);
-
-    useEffect(() => {
-        if (transactionHistory.length > 0) {
-            toast.info("Transaction history loaded successfully!", {
+        } catch (error) {
+            console.error("Error fetching token balance:", error);
+            toast.error("Failed to fetch token balance or transaction history. Please try again later.", {
                 position: "top-right",
                 autoClose: 5000,
                 hideProgressBar: false,
             });
+        } finally {
+            setLoadingHistory(false);
         }
-    }, [transactionHistory]);
+    };
+
+    useEffect(() => {
+        fetchTokenBalance();
+
+        // Call every 5 seconds
+        const interval = setInterval(() => {
+            fetchTokenBalance();
+        }, 5000);
+
+        return () => clearInterval(interval);
+
+    }, [account?.address]);
 
     // const MakeTransaction = async () => {
     //     const parsedAmount = parseUnits(amount, 18);
@@ -108,28 +111,37 @@ export default function Dashboard() {
 
     const { mutate: sendTransaction, isPending } = useSendTransaction();
     const MakeTransaction = async () => {
+        if (!recipientAddress || !amount) {
+            toast.error("Please enter a valid recipient address and amount.", {
+                position: "top-right",
+                autoClose: 5000,
+                hideProgressBar: false,
+            });
+            return;
+        }
         sendTransaction({
             to: recipientAddress,
             value: parseUnits(amount, 18),
             chain: sepolia,
             client: client
         });
-    };
+        setTransactionPending(true);
 
-    useEffect(() => {
-        if (isPending) {
-            toast.info("Transaction is being processed...", {
+        setTimeout(() => {
+            setTransactionPending(false);
+            setRecipientAddress("");
+            setAmount("");
+            toast.success("Transaction sent successfully!", {
                 position: "top-right",
                 autoClose: 5000,
                 hideProgressBar: false,
             });
-        }
-    }, [isPending]);
+        }, 8000);
+    };
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 p-4 md:p-6">
             <div className="max-w-4xl mx-auto space-y-6">
-                {/* Header */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                     <div>
                         <h1 className="text-3xl font-bold text-slate-800 mb-2">Wallet Dashboard</h1>
@@ -137,8 +149,7 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                {/* Wallet Overview */}
-                <div className="bg-gradient-to-r from-blue-600 via-blue-700 to-purple-700 p-6 rounded-2xl shadow-xl mb-6 text-white relative overflow-hidden">
+                <div className="max-w-2xl m-auto bg-gradient-to-r from-blue-600 via-blue-700 to-purple-700 p-6 rounded-2xl shadow-xl mb-6 text-white relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-16 translate-x-16"></div>
                     <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full translate-y-12 -translate-x-12"></div>
 
@@ -180,27 +191,26 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
+                    <div className="grid grid-cols-1 md:grid-cols-1 gap-4 relative z-10">
                         <div className="bg-white/15 backdrop-blur-sm p-5 rounded-xl border border-white/20 hover:bg-white/20 transition-all duration-200">
                             <div className="flex justify-between items-center mb-3">
                                 <p className="text-sm text-blue-100">ETH Balance</p>
                                 {/* <span className="text-xs bg-white/20 px-2 py-1 rounded-full">{network}</span> */}
                             </div>
                             <p className="text-2xl font-bold">
-                                {isLoading ? "..." : data?.displayValue || "0.0000"} {data?.symbol || "ETH"}
+                                {isLoading ? "..." : balance || "0.0000"} {data?.symbol || "ETH"}
                             </p>
                         </div>
-                        <div className="bg-white/15 backdrop-blur-sm p-5 rounded-xl border border-white/20 hover:bg-white/20 transition-all duration-200">
+                        {/* <div className="bg-white/15 backdrop-blur-sm p-5 rounded-xl border border-white/20 hover:bg-white/20 transition-all duration-200">
                             <div className="flex justify-between items-center mb-3">
                                 <p className="text-sm text-blue-100">Token Balance</p>
                                 <span className="text-xs bg-white/20 px-2 py-1 rounded-full">MyToken</span>
                             </div>
-                            <p className="text-2xl font-bold">{isLoading ? "..." : data?.displayValue || "0.00"} MYT</p>
-                        </div>
+                            <p className="text-2xl font-bold">{isLoading ? "..." : balance || "0.00"} MYT</p>
+                        </div> */}
                     </div>
                 </div>
 
-                {/* Tabs */}
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                     <div className="flex border-b border-gray-100">
                         <button
@@ -225,10 +235,9 @@ export default function Dashboard() {
                         </button>
                     </div>
 
-                    {/* Send Tokens Tab */}
                     {tab === "send" && (
                         <div className="p-6">
-                            <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
+                            <h3 className="text-lg text-gray-700 font-semibold mb-6 flex items-center gap-2">
                                 <Send className="w-5 h-5 text-green-600" />
                                 Send MyTokens
                             </h3>
@@ -271,7 +280,14 @@ export default function Dashboard() {
                                         }`}
                                     onClick={MakeTransaction}
                                 >
-                                    <Send size={16} /> Send Tokens
+                                    {/* <Send size={16} /> Send Tokens */}
+                                    {transactionPending ? (
+                                        <span>
+                                            <Clock className="w-5 h-5" /> Sending...
+                                        </span>
+                                    ) : (
+                                        <><Send size={16} /> send Tokens</>
+                                    )}
                                 </button>
                                 {/* <TransactionButton
                                     transaction={() => { return MakeTransaction(); }}
@@ -289,48 +305,55 @@ export default function Dashboard() {
                         </div>
                     )}
 
-                    {/* Transaction History Tab */}
                     {tab === "history" && (
-                        <div className="p-6">
-                            <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                                <Clock className="w-5 h-5 text-purple-600" />
-                                Transaction History
-                            </h3>
+                        loadinghistory ? (
+                            <div className="p-6">
+                                <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
+                                    <Clock className="w-5 h-5 text-purple-600" />
+                                    Loading Transaction History...
+                                </h3>
+                                <p className="text-gray-500">Please wait while we fetch your transaction history.</p>
+                            </div>
+                        ) : (
+                            <div className="p-6">
+                                <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
+                                    <Clock className="w-5 h-5 text-purple-600" />
+                                    Transaction History
+                                </h3>
 
-                            {transactionHistory.length > 0 ? (
-                                <ul className="space-y-4">
-                                    {transactionHistory.map((tx: any) => (
-                                        <li key={tx.hash} className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-sm text-gray-500">Hash:</span>
-                                                <span className="font-mono text-black text-sm">{tx.hash}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-sm text-gray-500">From:</span>
-                                                <span className="font-mono text-black text-sm">{tx.from}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-sm text-gray-500">To:</span>
-                                                <span className="font-mono text-black text-sm">{tx.to}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                                <span className="text-sm text-gray-500">Amount:</span>
-                                                <span className="font-mono text-black text-sm">{ethers.formatEther(tx.value)} MYT</span>
-                                            </div>
-                                        </li>
-                                    ))}
-                                </ul>
-                            ) : (
-                                <p className="text-gray-500">No transactions found.</p>
-                            )}
-                        </div>
+                                {transactionHistory.length > 0 ? (
+                                    <ul className="space-y-4">
+                                        {transactionHistory.map((tx: any) => (
+                                            <li key={tx.hash} className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <span className="text-sm text-gray-500">Hash:</span>
+                                                    <span className="font-mono text-black text-sm">{tx.hash}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <span className="text-sm text-gray-500">From:</span>
+                                                    <span className="font-mono text-black text-sm">{tx.from}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <span className="text-sm text-gray-500">To:</span>
+                                                    <span className="font-mono text-black text-sm">{tx.to}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-sm text-gray-500">Amount:</span>
+                                                    <span className="font-mono text-black text-sm">{ethers.formatEther(tx.value)} {data?.symbol}</span>
+                                                </div>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-gray-500">No transactions found.</p>
+                                )}
+                            </div>
+                        )
                     )}
                 </div>
 
-                {/* Contract Info */}
                 <div className="bg-white p-6 rounded-xl shadow-lg">
-                    <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                        <ExternalLink className="w-5 h-5 text-purple-600" />
+                    <h3 className="text-lg text-gray-700 font-semibold mb-6 flex items-center gap-2">
                         Contract Information
                     </h3>
 
@@ -338,22 +361,22 @@ export default function Dashboard() {
                         <div className="space-y-4">
                             <div>
                                 <p className="text-sm font-medium text-gray-600 mb-1">Token Name</p>
-                                <p className="font-semibold text-gray-900">MyToken</p>
+                                <p className="font-semibold text-gray-900">{contract?.chain.nativeCurrency?.name}</p>
                             </div>
                             <div>
                                 <p className="text-sm font-medium text-gray-600 mb-1">Symbol</p>
-                                <p className="font-semibold text-gray-900">MYT</p>
+                                <p className="font-semibold text-gray-900">{contract?.chain.nativeCurrency?.symbol}</p>
                             </div>
                         </div>
                         <div className="space-y-4">
                             <div>
                                 <p className="text-sm font-medium text-gray-600 mb-1">Decimals</p>
-                                <p className="font-semibold text-gray-900">18</p>
+                                <p className="font-semibold text-gray-900">{contract?.chain.nativeCurrency?.decimals}</p>
                             </div>
-                            <div>
+                            {/* <div>
                                 <p className="text-sm font-medium text-gray-600 mb-1">Total Supply</p>
-                                <p className="font-semibold text-gray-900">1,000,000 MYT</p>
-                            </div>
+                                <p className="font-semibold text-gray-900">1,000,000 {contract?.chain.nativeCurrency?.symbol}</p>
+                            </div> */}
                         </div>
                     </div>
 
